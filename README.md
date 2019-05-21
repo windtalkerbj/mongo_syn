@@ -21,7 +21,10 @@ V0.1
 5,配置说明（db.cfg）
 [MONGO_SYNC]
   log_path={日志输出目录}
+  
   mongo_url={MONGOS地址}
+  
   bootstrap_servers={KAFKA地址}
+  
   from_offset={如留空，则从上次COMMIT位置开始消费消息,非空格式如<TOPIC>.<PARTITION_NUM>:<OFFSET>}
               例如TEST.0:1235917,TEST.1:99992,表示从TOPIC名字为TEST，PARTION分区标号0对应偏移地址是1235917,标号1对应99992...
