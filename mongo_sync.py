@@ -200,26 +200,14 @@ if __name__ == '__main__':
     )
     
     logger.warning('Topic[%s],sub[%s],Group[%s]',consumer.topics(),consumer.subscription(),Group )
-    #返回SET{}
-    #ppp = consumer.partitions_for_topic(Topic)
-    #logger.warning('partitions[%s]=[%s]',type(ppp),ppp )
-    
-    #tps,list中每个是TopicPartition(nameturple)
     tps = [TopicPartition(Topic, p) for p in consumer.partitions_for_topic(Topic)]
     for tp in tps:
         logger.warning('PS[%s:%d]',tp.topic,tp.partition)
     
-    #返回dict{TopicPartition: int}
     latest_offset = consumer.end_offsets(tps)
     for tp in tps:
         logger.warning('LatestOffset[%s:%d]=%d',tp.topic,tp.partition,latest_offset[tp])
-    #for _offset in consumer.end_offsets(tps):
-    #    logger.warning('Offset[%s]=%d',tp.topic,tp.partition)
-
-    #logger.warning('latest Offset[%s]=%s',type(latest_offset),latest_offset)
     consumer.assign(tps)
-    #TopicPartition = namedtuple("TopicPartition", ["topic", "partition"])
-    #partition_offset = []
 
     if from_offset is None:
         for i in range(len(tps)):
@@ -240,12 +228,6 @@ if __name__ == '__main__':
             consumer.seek(tps[i],  a_dict[aTP])    
         #partition_offset.append(commit_offset)  
 
-    '''
-    for i in range(len(tps)):
-        logger.warning('consumer.position=%d',consumer.position(tps[i]))
-    '''
-    
-    
     iCnt = 0
     for msg in consumer:
         dict_cdc = json.loads(msg.value)
