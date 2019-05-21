@@ -17,7 +17,7 @@ via canal(By Alibaba),decode MYSQL binlog content,then transform to MONGODB
 
 
 3,启动说明
-  python mongo_syn.py <TOPCI> <CONSUMER-GROUP-NAME> 
+  python mongo_syn.py {TOPIC_NAME} {CONSUMER-GROUP-NAME} 
 
 
 4,开发涉及资源
