@@ -15,8 +15,10 @@ via canal(By Alibaba),decode MYSQL binlog content,then transform to MONGODB
 2，数据流向：
   MYSQL BINLOG->CANAL->KAFKA->MONGODB
 
+
 3,启动说明
   python mongo_syn.py <TOPCI> <CONSUMER-GROUP-NAME> 
+
 
 4,开发涉及资源
   Canal1.1.3
@@ -24,7 +26,9 @@ via canal(By Alibaba),decode MYSQL binlog content,then transform to MONGODB
   Kafka2.12
   pymongo/kafka-python
 
+
 5,配置说明（db.cfg）
+
 [MONGO_SYNC]
 
   log_path={日志输出目录}
