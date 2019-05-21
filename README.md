@@ -1,6 +1,8 @@
 # mongo_syn
 via canal(By Alibaba),decode MYSQL binlog content,then transform to MONGODB
-V0.1
+
+0,V0.1
+
 1,设计目标：
 
   --将MYSQL实时数据变动、DDL变更同步到对应的MONGODB上
