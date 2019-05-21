@@ -20,6 +20,7 @@ V0.1
 
 5,配置说明（db.cfg）
 [MONGO_SYNC]
+
   log_path={日志输出目录}
   
   mongo_url={MONGOS地址}
