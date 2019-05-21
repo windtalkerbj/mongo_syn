@@ -2,6 +2,7 @@
 via canal(By Alibaba),decode MYSQL binlog content,then transform to MONGODB
 V0.1
 1,设计目标：
+
   --将MYSQL实时数据变动、DDL变更同步到对应的MONGODB上
   
   --在MONGO上对数据做加工,形成类似统一视图（FUTURE TARGET）
