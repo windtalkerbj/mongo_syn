@@ -1,7 +1,5 @@
-# mongo_syn
+# mongo_syn(v.01)
 via canal(By Alibaba),decode MYSQL binlog content,then transform to MONGODB
-
-0,V0.1
 
 1,设计目标：
 
