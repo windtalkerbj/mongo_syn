@@ -8,6 +8,7 @@ import pymongo
 from kafka import KafkaConsumer
 from kafka.errors import KafkaError
 from kafka.structs import BrokerMetadata, PartitionMetadata, TopicPartition
+from kafka.admin import KafkaAdminClient, NewTopic
 from collections import namedtuple
 import json
 import re
@@ -62,6 +63,18 @@ def getShardKeys(shard_key_dict):
     
     return 0
 
+def transform_data(data_dict_list,sqltype_dict):
+    for aDict in data_dict_list:
+        for key, value in aDict.items():
+            if sqltype_dict[ key ] in [-5,4]:
+                #logger.warning('key:value=%s:%s',key,value)
+                if value is not None:
+                    aDict[ key ] = int(value)
+            elif sqltype_dict[ key ] in [3]:
+                if value is not None:
+                    aDict[ key ] = float(value)
+    return 0
+
 def dealCDCData(dict_cdc):
     '''
     if dict_cdc['isDdl'] == True :
@@ -74,8 +87,10 @@ def dealCDCData(dict_cdc):
        logger.warning('create_collection[%s]:[%s]',dict_cdc['table'],result) 
     '''
     _mongo_tb = _mongo_db[dict_cdc['table']]
+    
     if dict_cdc['data'] is not None:
         row_num = len(dict_cdc['data'])
+        transform_data(dict_cdc['data'],dict_cdc['sqlType'])
         logger.warning('Type=%s,Table=%s,rowcount=%d',dict_cdc['type'],dict_cdc['table'],row_num)
     
     if dict_cdc['type'] == 'UPDATE' :
@@ -97,8 +112,8 @@ def dealCDCData(dict_cdc):
             op_dict['$set'] = aDict 
             logger.warning('UPDATE,COLUMN=%s',op_dict)
             result = _mongo_tb.update_one(pk_dict,op_dict,upsert=True)
-            logger.warning('update result,matched_count[%d],modified_count[%d],upserted_id[%s]',
-        result.matched_count,result.modified_count,result.upserted_id )
+            logger.warning('update result,matched_count[%d],modified_count[%d],upserted_id[%s],pk[%s]',
+        result.matched_count,result.modified_count,result.upserted_id,pk_dict )
         #if result.matched_count == 0 :
         #     result = _mongo_tb.insert_one(pk_dict,op_dict,upsert=False) 
         
@@ -200,21 +215,40 @@ if __name__ == '__main__':
     )
     
     logger.warning('Topic[%s],sub[%s],Group[%s]',consumer.topics(),consumer.subscription(),Group )
-    tps = [TopicPartition(Topic, p) for p in consumer.partitions_for_topic(Topic)]
+    #返回SET{}
+    ppp = consumer.partitions_for_topic(Topic)
+    if ppp is None:
+        logger.error('TOPIC[%s] not exist in cluster',Topic)
+        admin_client = KafkaAdminClient(bootstrap_servers= kafka_url)
+        topic_list = []
+        topic_list.append(NewTopic(name=Topic, num_partitions=1, replication_factor=1))
+        result = admin_client.create_topics(new_topics=topic_list, validate_only=False)
+        logger.warning('create_topics[%s]=%s',type(result),result)
+        #exit(-1)    
+    
+    #tps,list中每个是TopicPartition(nameturple)
+    tps = [TopicPartition(Topic, p) for p in ppp]
     for tp in tps:
         logger.warning('PS[%s:%d]',tp.topic,tp.partition)
     
+    #返回dict{TopicPartition: int}
     latest_offset = consumer.end_offsets(tps)
     for tp in tps:
         logger.warning('LatestOffset[%s:%d]=%d',tp.topic,tp.partition,latest_offset[tp])
+    #for _offset in consumer.end_offsets(tps):
+    #    logger.warning('Offset[%s]=%d',tp.topic,tp.partition)
+
+    #logger.warning('latest Offset[%s]=%s',type(latest_offset),latest_offset)
     consumer.assign(tps)
+    #TopicPartition = namedtuple("TopicPartition", ["topic", "partition"])
+    #partition_offset = []
 
     if from_offset is None:
         for i in range(len(tps)):
             commit_offset = consumer.committed(tps[i])
             if commit_offset is not None:
                 logger.warning('Topic[%s:%d] commit Offset=%d',tp.topic,tp.partition,commit_offset)
-            consumer.seek(tps[i], commit_offset)
+                consumer.seek(tps[i], commit_offset)
     else:
         a_dict = {}
         for aStr in from_offset.split(','):
@@ -228,10 +262,16 @@ if __name__ == '__main__':
             consumer.seek(tps[i],  a_dict[aTP])    
         #partition_offset.append(commit_offset)  
 
+    '''
+    for i in range(len(tps)):
+        logger.warning('consumer.position=%d',consumer.position(tps[i]))
+    '''
+    
+    
     iCnt = 0
     for msg in consumer:
         dict_cdc = json.loads(msg.value)
-        logger.warning("%s:%d:%d: key=%s value=%s" % (msg.topic, msg.partition,
+        logger.warning("%s:%d:%d: key=%s,value=%s" % (msg.topic, msg.partition,
                                           msg.offset, msg.key,dict_cdc))
         dealCDCData(dict_cdc)
         #iCnt += 1
