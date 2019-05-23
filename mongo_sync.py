@@ -45,12 +45,21 @@ shard_key_dict = {}
 
 run_date = time.strftime('%Y%m%d', time.localtime(time.time()))
 logFile = logPath + "/"+module_name+"_"+run_date+".log"
-
+'''
 logging.basicConfig(level=logging.WARNING,
                     filename=logFile,
                     datefmt='%Y-%m-%d %H:%M:%S',
-                    format='%(asctime)s - %(name)s - %(levelname)s - %(lineno)d - %(module)s - %(message)s')
+                    format='%(asctime)s - %(name)s - %(levelname)s - %(lineno)d - %(module)s - %(message)s'
+                    )
 logger = logging.getLogger(__name__)
+'''
+fh = logging.FileHandler(logFile,encoding='utf-8')
+logger = logging.getLogger() 
+logger.setLevel(logging.WARNING)
+fm = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(lineno)d - %(module)s - %(message)s')
+logger.addHandler(fh)
+fh.setFormatter(fm)
+
 #print('Logger name='+logger.name)
 
 def getShardKeys(shard_key_dict):
@@ -75,11 +84,17 @@ def transform_data(data_dict_list,sqltype_dict):
                     aDict[ key ] = float(value)
     return 0
 
+def transform_pkdata(sTable,data_dict,pkname_list,pk_dict):
+    aTable = dict_cdc['database']+'.'+sTable
+    for pk in pkname_list:
+        pk_dict[ pk ] = data_dict[ pk ]
+        if sTable not in shard_key_dict:
+            key_list = shard_key_dict[aTable]
+            for i in range(len(key_list)):
+                pk_dict[ key_list[i] ] = data_dict[ key_list[i] ]
+    return 0
+
 def dealCDCData(dict_cdc):
-    '''
-    if dict_cdc['isDdl'] == True :
-        return 0
-    '''
     _mongo_db = client[dict_cdc['database']]
     '''
     if dict_cdc['table'] not in _mongo_db.list_collection_names():
@@ -93,41 +108,28 @@ def dealCDCData(dict_cdc):
         transform_data(dict_cdc['data'],dict_cdc['sqlType'])
         logger.warning('Type=%s,Table=%s,rowcount=%d',dict_cdc['type'],dict_cdc['table'],row_num)
     
-    if dict_cdc['type'] == 'UPDATE' :
-        sTable = dict_cdc['database']+'.'+dict_cdc['table']
+    #pk_shard = {}
+    #sTable = dict_cdc['database']+'.'+dict_cdc['table']
+    sTable = dict_cdc['table']
+    if dict_cdc['type'] in  ['UPDATE','INSERT'] :
         logger.warning('UPDATE table=%s',sTable)
         for aDict in dict_cdc['data']:    
             pk_dict = {}
-            for pk in dict_cdc['pkNames']:
-                pk_dict[ pk ] = aDict[ pk ]
-            
-            #如果该表是SHARD，加上SHARD KEY
-            if sTable in shard_key_dict.keys():
-                key_list = shard_key_dict[sTable]
-                for i in range(len(key_list)):
-                    pk_dict[ key_list[i] ] = aDict[ key_list[i] ]    
-            
+            transform_pkdata(sTable,aDict,dict_cdc['pkNames'],pk_dict)
             logger.warning('UPDATE,pk=%s',pk_dict)
             op_dict = {}
             op_dict['$set'] = aDict 
             logger.warning('UPDATE,COLUMN=%s',op_dict)
             result = _mongo_tb.update_one(pk_dict,op_dict,upsert=True)
-            logger.warning('update result,matched_count[%d],modified_count[%d],upserted_id[%s],pk[%s]',
-        result.matched_count,result.modified_count,result.upserted_id,pk_dict )
+            logger.warning('%s result,matched_count[%d],modified_count[%d],upserted_id[%s],pk[%s]',
+        dict_cdc['type'],result.matched_count,result.modified_count,result.upserted_id,pk_dict )
         #if result.matched_count == 0 :
         #     result = _mongo_tb.insert_one(pk_dict,op_dict,upsert=False) 
-        
-    elif dict_cdc['type'] == 'INSERT' :
-        for aDict in dict_cdc['data']: 
-            result = _mongo_tb.insert_one(aDict)
-            pkVals = {}
-            for aKey in  dict_cdc['pkNames']: 
-                pkVals[aKey] = aDict[aKey]
-            logger.warning('INSERT result id=%s,pk=%s',result.inserted_id,pkVals)
     elif dict_cdc['type'] == 'DELETE' :
         #logger.warning('DELETE')
         for aDict in dict_cdc['data']: 
             pk_dict = {}
+            transform_pkdata(sTable,aDict,dict_cdc['pkNames'],pk_dict)
             for pk in dict_cdc['pkNames']:
                 pk_dict[ pk ] = aDict[ pk ]
             result = _mongo_tb.delete_one(pk_dict)    
