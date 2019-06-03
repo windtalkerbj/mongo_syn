@@ -37,11 +37,14 @@ if cp.has_option(section,'from_offset'):
     from_offset=cp.get(section, "from_offset")
 else:
     print('NO from_offset in cfg')
+special_tbs = cp.get(section, "special_tb") 
+spe_table_list = special_tbs.split(',')
 client = pymongo.MongoClient(mongo_url)
 #logger.debug('[%d]Databases[%s]',iOdd,client.list_database_names())
 DB_NAME = 'hscs'
 db = client[ DB_NAME ]
 shard_key_dict = {}
+er_rules_dict = {}
 
 run_date = time.strftime('%Y%m%d', time.localtime(time.time()))
 logFile = logPath + "/"+module_name+"_"+run_date+".log"
@@ -86,12 +89,80 @@ def transform_data(data_dict_list,sqltype_dict):
 
 def transform_pkdata(sTable,data_dict,pkname_list,pk_dict):
     aTable = dict_cdc['database']+'.'+sTable
+    if pkname_list is None:
+        logger.error('pkname_list is None')
+        return 0
     for pk in pkname_list:
         pk_dict[ pk ] = data_dict[ pk ]
-        if sTable not in shard_key_dict:
+        if aTable in shard_key_dict:
             key_list = shard_key_dict[aTable]
             for i in range(len(key_list)):
                 pk_dict[ key_list[i] ] = data_dict[ key_list[i] ]
+    return 0
+
+def deal_special_tb(dict_cdc):
+    _mongo_db = client[dict_cdc['database']]
+    _mongo_tb = _mongo_db[dict_cdc['table']]
+    md_cfg_dict = er_rules_dict[ dict_cdc['table'] ]
+
+    _parent_tb = _mongo_db[md_cfg_dict['parent']]
+    
+    parent_join_key = md_cfg_dict['parent_join_key']
+    child_join_key = md_cfg_dict['child_join_key']
+    child_sub_key = md_cfg_dict['child_sub_key']
+    sub_docum = md_cfg_dict['sub_docum']
+    #logger.debug('Enter in deal_special_tb[%s]',dict_cdc['table'])
+    
+    try:    
+        if 'DELETE' == dict_cdc['type']:
+            for aDict in dict_cdc['data']:
+                logger.warning('%s,CONDITION=%s,%s',dict_cdc['type'],aDict[parent_join_key],aDict[child_sub_key])
+                pk_dict = {}
+                pk_dict[parent_join_key] = aDict[parent_join_key]
+                tmp2_dict = {}
+                tmp2_dict[child_sub_key] = aDict[child_sub_key]
+                tmp_dict = {}
+                tmp_dict[sub_docum] = tmp2_dict
+                op_dict = {}
+                op_dict['$pull'] = tmp_dict
+                logger.warning('%s,CONDITION=%s,%s',dict_cdc['type'],pk_dict,op_dict)
+                #xxxx.update({APPLY_NUM:394414},{ $pull: {PLANS:{ SERIAL_NUMBER:98 } } },
+                result = _parent_tb.update_one(pk_dict,op_dict)
+                logger.warning('DELETE==matched_count[%d],modified_count[%d],upserted_id[%s]',
+            result.matched_count,result.modified_count,result.upserted_id )
+            
+        elif dict_cdc['type'] in  ['UPDATE','INSERT']:
+                #{ $addToSet: { tags: { $each: [ "camera", "electronics", "accessories" ] } } }
+                #先删除,后addToSet
+            for aDict in dict_cdc['data']:
+                logger.warning('%s,CONDITION=%s,%s',dict_cdc['type'],aDict[parent_join_key],aDict[child_sub_key])
+                pk_dict = {}
+                pk_dict[parent_join_key] = aDict[parent_join_key]
+                tmp2_dict = {}
+                tmp2_dict[child_sub_key] = aDict[child_sub_key]
+                tmp_dict = {}
+                tmp_dict['PLANS'] = tmp2_dict
+                op_dict = {}
+                op_dict['$pull'] = tmp_dict
+                logger.warning('%s,CONDITION=%s,%s',dict_cdc['type'],pk_dict,op_dict)
+                #xxxx.update({APPLY_NUM:394414},{ $pull: {PLANS:{ SERIAL_NUMBER:98 } } },
+                result = _parent_tb.update_one(pk_dict,op_dict)
+                logger.warning('DELETE==matched_count[%d],modified_count[%d],upserted_id[%s]',
+                result.matched_count,result.modified_count,result.upserted_id )
+                new_dict = {}
+                new_dict['PLANS'] = tmp2_dict
+                insert_op_dict = {}
+                insert_op_dict['$push'] = new_dict
+                #logger.warning('%s,CONDITION=%s,%s',dict_cdc['type'],pk_dict,insert_op_dict)
+                #xxxx.update({APPLY_NUM:394414},{ $push: {PLANS:{ XXXX } } },
+                result = _parent_tb.update_one(pk_dict,insert_op_dict,upsert=True)
+                logger.warning('push==matched_count[%d],modified_count[%d],upserted_id[%s]',
+                    result.matched_count,result.modified_count,result.upserted_id )
+                if result.modified_count == 0:
+                    return -1
+    except Exception as exc:
+        logger.error('Exception[%s]=%s',type(exc),exc)
+        return -1
     return 0
 
 def dealCDCData(dict_cdc):
@@ -111,89 +182,98 @@ def dealCDCData(dict_cdc):
     #pk_shard = {}
     #sTable = dict_cdc['database']+'.'+dict_cdc['table']
     sTable = dict_cdc['table']
+#    logger.warning('%s table=%s',dict_cdc['type'] ,sTable)
+    
+    if sTable in er_rules_dict:
+         return deal_special_tb(dict_cdc)
+
     if dict_cdc['type'] in  ['UPDATE','INSERT'] :
-        logger.warning('UPDATE table=%s',sTable)
-        for aDict in dict_cdc['data']:    
-            pk_dict = {}
-            transform_pkdata(sTable,aDict,dict_cdc['pkNames'],pk_dict)
-            logger.warning('UPDATE,pk=%s',pk_dict)
-            op_dict = {}
-            op_dict['$set'] = aDict 
-            logger.warning('UPDATE,COLUMN=%s',op_dict)
-            result = _mongo_tb.update_one(pk_dict,op_dict,upsert=True)
-            logger.warning('%s result,matched_count[%d],modified_count[%d],upserted_id[%s],pk[%s]',
-        dict_cdc['type'],result.matched_count,result.modified_count,result.upserted_id,pk_dict )
-        #if result.matched_count == 0 :
-        #     result = _mongo_tb.insert_one(pk_dict,op_dict,upsert=False) 
+        try:
+            for aDict in dict_cdc['data']:    
+                pk_dict = {}
+                transform_pkdata(sTable,aDict,dict_cdc['pkNames'],pk_dict)
+                logger.warning('UPDATE,pk=%s',pk_dict)
+                op_dict = {}
+                op_dict['$set'] = aDict 
+                logger.warning('UPDATE,COLUMN=%s',op_dict)
+                result = _mongo_tb.update_one(pk_dict,op_dict,upsert=True)
+                logger.warning('%s result,matched_count[%d],modified_count[%d],upserted_id[%s],pk[%s]',
+            dict_cdc['type'],result.matched_count,result.modified_count,result.upserted_id,pk_dict )
+        except Exception as exc:
+            logger.error('Exception[%s]=%s',type(exc),exc)
+            return -1
+    
     elif dict_cdc['type'] == 'DELETE' :
-        #logger.warning('DELETE')
-        for aDict in dict_cdc['data']: 
-            pk_dict = {}
-            transform_pkdata(sTable,aDict,dict_cdc['pkNames'],pk_dict)
-            for pk in dict_cdc['pkNames']:
-                pk_dict[ pk ] = aDict[ pk ]
-            result = _mongo_tb.delete_one(pk_dict)    
-            logger.warning('DELETE,affected=%d',result.deleted_count)
+        try:
+            for aDict in dict_cdc['data']: 
+                pk_dict = {}
+                transform_pkdata(sTable,aDict,dict_cdc['pkNames'],pk_dict)
+                logger.warning('DELETE,pk=%s',pk_dict)
+                result = _mongo_tb.delete_one(pk_dict)    
+                logger.warning('DELETE,affected=%d',result.deleted_count)
+        except Exception as exc:
+            logger.error('Exception[%s]=%s',type(exc),exc)
+            return -1
+
     elif dict_cdc['type'] == 'CREATE' :
-        logger.warning('Type==Create,[%s]',dict_cdc['table'])
         try:
             _mongo_tb = _mongo_db.create_collection(dict_cdc['table'])
+            #获得PRIMARY KEY信息        
+            str_ddl = dict_cdc['sql']
+            regex = r"PRIMARY\s+KEY\s*\((\S+)\)"
+            result = re.search(regex, str_ddl,  re.MULTILINE)
+            logger.warning('CREATE pk[%s]=%s',type(result),result)
+            pk_list = []
+            for aKey in result.group(1).replace('"','').split(','):
+                aTuple = ( aKey,pymongo.ASCENDING )
+                pk_list.append(aTuple) 
+            logger.warning('PK LIST=%s',pk_list)   
+            _mongo_tb.create_index(pk_list)
         except Exception as exc:
             logger.warning('Exception=%s',exc)
-            if isinstance(exc, pymongo.errors.CollectionInvalid):
-                return 0
-        #获得PRIMARY KEY信息        
-        str_ddl = dict_cdc['sql']
-        regex = r"PRIMARY\s+KEY\s*\((\S+)\)"
-        result = re.search(regex, str_ddl,  re.MULTILINE)
-        logger.warning('CREATE pk[%s]=%s',type(result),result)
-        pk_list = []
-        for aKey in result.group(1).replace('"','').split(','):
-            aTuple = ( aKey,pymongo.ASCENDING )
-            pk_list.append(aTuple) 
-        logger.warning('PK LIST=%s',pk_list)   
-        _mongo_tb.create_index(pk_list)    
+            #if isinstance(exc, pymongo.errors.CollectionInvalid):
+            return -1
+
     elif dict_cdc['type'] == 'ERASE' :
-        logger.warning('Type==DROP [%s]',dict_cdc['table'])
-        result =  _mongo_db.drop_collection(dict_cdc['table'])
-        logger.warning('drop_collection [%s]=%d',type(result),result['ok'])
+        try:
+            result =  _mongo_db.drop_collection(dict_cdc['table'])
+            logger.warning('drop_collection [%s]=%d',type(result),result['ok'])
+        except Exception as exc:
+            logger.warning('Exception=%s',exc)
+            #if isinstance(exc, pymongo.errors.CollectionInvalid):
+            return -1
         return result['ok']
     else :
         logger.warning(dict_cdc['type'])
 
     return 0
 
-def demo_to_plans():
-    line = db['hscs_itf_imp_lines']
-    condition = {
-    'H_PROCESS_STATUS':'S',
-    'H_DISABLE_FLAG':'N',
-    'PROCESS_STATUS':'S',
-    'IMPORT_STATUS':{'$ne':'S'},
-    'INTERFACE_NAME':{ '$in' :['ALIX_AR_INTERFACE','OPL_AR_INTERFACE']}
-    }
-    startTime = time.perf_counter()
-    results = line.find(condition,no_cursor_timeout = True).sort( [
-        ('VALUE2', pymongo.ASCENDING),
-        ('LINE_ID', pymongo.DESCENDING)])
-   
-    #list_result = []
-    iCnt = 0
-    iMiss = 0
-    for res in results:
-        iCnt +=1 
-        tmp_dict = dict({'INTERFACE_NAME': res['INTERFACE_NAME'], 'LINE_ID': res['LINE_ID'],\
-                'VALUE2':res['VALUE2'],'VALUE3':res.get('VALUE3', 'not_exist'),'VALUE4':res['VALUE4'],'VALUE5':res['VALUE5'],'VALUE6':res['VALUE6'],\
-        'VALUE7':res['VALUE7'],'VALUE8':res['VALUE8'],'VALUE9':res['VALUE9'],'VALUE10':res['VALUE10'],'VALUE11':res['VALUE11']
-        })
-                #list_result.append(tmp_dict)
-        if iCnt % 100 == 0 :
-            logger.debug('(%d)RESULT DEALOK',iCnt) 
-       
-    endTime = time.perf_counter() 
-    logger.debug('Hit:%d,Miss:%d (%f SECs)',iCnt,iMiss,(endTime-startTime))
-    #CHECK APPLY_NO
+def get_er_rules(er_rules_dict):
+    cp = ConfigParser()
+    cp.read(etcPath)
+    idx =  cp.sections().index('MONGO_SYNC')
+    section = cp.sections()[idx]
+    str_er_rule = cp.get(section, "er_rules")
+    #print(str_er_rule)
+    for str in str_er_rule.split(';'):
+        if(len(str)==0):
+            break
+        rules_dict = {}
+        _cfg_list = str.split(':')
+        #print(_cfg_list)
+        if len(_cfg_list) != 5:
+            return -1
+        cfg_dict = {}
+        cfg_dict['parent'] = _cfg_list[1]
+        cfg_dict['parent_join_key'] = _cfg_list[2].split('-')[0]
+        cfg_dict['child_join_key'] = _cfg_list[2].split('-')[1]
+        cfg_dict['child_sub_key'] = _cfg_list[3]
+        cfg_dict['sub_docum'] = _cfg_list[4]
+        er_rules_dict[_cfg_list[0]] = cfg_dict
+    
+    logger.warning('er_rules_list:%s',er_rules_dict)    
     return 0
+
 
 if __name__ == '__main__':
     print(sys.argv)
@@ -204,7 +284,9 @@ if __name__ == '__main__':
     Topic = sys.argv[1]
     Group = sys.argv[2]
     logger.warning('Begin to run...')
-    
+    #06/03 获得ER rules
+    get_er_rules(er_rules_dict)
+    #exit(0)
     
     getShardKeys(shard_key_dict)
     logger.warning('shard_key_dict=%s',shard_key_dict)
@@ -275,9 +357,11 @@ if __name__ == '__main__':
         dict_cdc = json.loads(msg.value)
         logger.warning("%s:%d:%d: key=%s,value=%s" % (msg.topic, msg.partition,
                                           msg.offset, msg.key,dict_cdc))
-        dealCDCData(dict_cdc)
+        if 0 == dealCDCData(dict_cdc):
         #iCnt += 1
-        consumer.commit()
+            consumer.commit()
+        else:
+            break
         #if iCnt == 10:
         #    break
     
